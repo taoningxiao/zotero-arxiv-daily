@@ -80,14 +80,15 @@ def get_arxiv_paper(query:str, debug:bool=False) -> list[ArxivPaper]:
         papers = []
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(days=LOOKBACK_DAYS)
-        logger.info(f"ARXIV_QUERY: {query}")
+        logger.info("ARXIV_QUERY: {}", query)
+        logger.info("ARXIV_QUERY is empty: {}", not bool(query))
         logger.info(
-            "Filter window (UTC): %s to %s (last %d days)",
+            "Filter window (UTC): {} to {} (last {} days)",
             cutoff.isoformat(),
             now.isoformat(),
             LOOKBACK_DAYS,
         )
-        logger.info("RSS entries: %d", len(feed.entries))
+        logger.info("RSS entries: {}", len(feed.entries))
         recent_entries = []
         entry_times = []
         for entry in feed.entries:
@@ -100,13 +101,13 @@ def get_arxiv_paper(query:str, debug:bool=False) -> list[ArxivPaper]:
         if entry_times:
             earliest = min(entry_times)
             latest = max(entry_times)
-            logger.info("RSS time span (UTC): %s to %s", earliest.isoformat(), latest.isoformat())
+            logger.info("RSS time span (UTC): {} to {}", earliest.isoformat(), latest.isoformat())
         else:
             logger.warning("No parsable timestamps found in RSS entries.")
-        logger.info("Entries within window: %d", len(recent_entries))
+        logger.info("Entries within window: {}", len(recent_entries))
         all_paper_ids = [i.id.removeprefix("oai:arXiv.org:") for i in recent_entries]
         all_paper_ids = list(dict.fromkeys(all_paper_ids))
-        logger.info("Unique arXiv IDs after filter: %d", len(all_paper_ids))
+        logger.info("Unique arXiv IDs after filter: {}", len(all_paper_ids))
         bar = tqdm(total=len(all_paper_ids),desc="Retrieving Arxiv papers")
         for i in range(0,len(all_paper_ids),20):
             search = arxiv.Search(id_list=all_paper_ids[i:i+20])

@@ -69,10 +69,14 @@ def _entry_datetime(entry):
 
 
 LOOKBACK_DAYS = 3
+FORCED_ARXIV_QUERY = "cs.AI"
 
 
 def get_arxiv_paper(query:str, debug:bool=False) -> list[ArxivPaper]:
     client = arxiv.Client(num_retries=10,delay_seconds=10)
+    if FORCED_ARXIV_QUERY:
+        logger.warning("Force ARXIV_QUERY to {}", FORCED_ARXIV_QUERY)
+        query = FORCED_ARXIV_QUERY
     feed = feedparser.parse(f"https://rss.arxiv.org/atom/{query}")
     if 'Feed error for query' in feed.feed.title:
         raise Exception(f"Invalid ARXIV_QUERY: {query}.")

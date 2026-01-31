@@ -30,6 +30,7 @@ from tempfile import mkstemp
 from paper import ArxivPaper
 from llm import set_global_llm
 import feedparser
+import requests
 
 def get_zotero_corpus(id:str,key:str) -> list[dict]:
     zot = zotero.Zotero(id, 'user', key)
@@ -77,7 +78,27 @@ def get_arxiv_paper(query:str, debug:bool=False) -> list[ArxivPaper]:
     if FORCED_ARXIV_QUERY:
         logger.warning("Force ARXIV_QUERY to {}", FORCED_ARXIV_QUERY)
         query = FORCED_ARXIV_QUERY
-    feed = feedparser.parse(f"https://rss.arxiv.org/atom/{query}")
+    rss_url = f"https://rss.arxiv.org/atom/{query}"
+    logger.info("RSS URL: {}", rss_url)
+    try:
+        resp = requests.get(
+            rss_url,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; Zotero-arXiv-Daily/1.0)"},
+            timeout=20,
+        )
+        logger.info("RSS HTTP status: {}", resp.status_code)
+        logger.info("RSS response bytes: {}", len(resp.content))
+        if resp.status_code != 200:
+            logger.warning("RSS response preview: {}", resp.text[:500])
+        feed = feedparser.parse(resp.content)
+    except Exception as e:
+        logger.exception("Failed to fetch RSS via requests: {}", e)
+        feed = feedparser.parse(rss_url)
+    logger.info("RSS bozo: {}", getattr(feed, "bozo", False))
+    if getattr(feed, "bozo", False):
+        logger.warning("RSS bozo_exception: {}", getattr(feed, "bozo_exception", None))
+    if getattr(feed, "feed", None):
+        logger.info("RSS feed title: {}", getattr(feed.feed, "title", None))
     if 'Feed error for query' in feed.feed.title:
         raise Exception(f"Invalid ARXIV_QUERY: {query}.")
     if not debug:

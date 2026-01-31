@@ -68,6 +68,9 @@ def _entry_datetime(entry):
     return datetime(*entry_time[:6], tzinfo=timezone.utc)
 
 
+LOOKBACK_DAYS = 3
+
+
 def get_arxiv_paper(query:str, debug:bool=False) -> list[ArxivPaper]:
     client = arxiv.Client(num_retries=10,delay_seconds=10)
     feed = feedparser.parse(f"https://rss.arxiv.org/atom/{query}")
@@ -75,16 +78,35 @@ def get_arxiv_paper(query:str, debug:bool=False) -> list[ArxivPaper]:
         raise Exception(f"Invalid ARXIV_QUERY: {query}.")
     if not debug:
         papers = []
-        cutoff = datetime.now(timezone.utc) - timedelta(days=3)
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=LOOKBACK_DAYS)
+        logger.info(f"ARXIV_QUERY: {query}")
+        logger.info(
+            "Filter window (UTC): %s to %s (last %d days)",
+            cutoff.isoformat(),
+            now.isoformat(),
+            LOOKBACK_DAYS,
+        )
+        logger.info("RSS entries: %d", len(feed.entries))
         recent_entries = []
+        entry_times = []
         for entry in feed.entries:
             entry_time = _entry_datetime(entry)
             if entry_time is None:
                 continue
+            entry_times.append(entry_time)
             if entry_time >= cutoff:
                 recent_entries.append(entry)
+        if entry_times:
+            earliest = min(entry_times)
+            latest = max(entry_times)
+            logger.info("RSS time span (UTC): %s to %s", earliest.isoformat(), latest.isoformat())
+        else:
+            logger.warning("No parsable timestamps found in RSS entries.")
+        logger.info("Entries within window: %d", len(recent_entries))
         all_paper_ids = [i.id.removeprefix("oai:arXiv.org:") for i in recent_entries]
         all_paper_ids = list(dict.fromkeys(all_paper_ids))
+        logger.info("Unique arXiv IDs after filter: %d", len(all_paper_ids))
         bar = tqdm(total=len(all_paper_ids),desc="Retrieving Arxiv papers")
         for i in range(0,len(all_paper_ids),20):
             search = arxiv.Search(id_list=all_paper_ids[i:i+20])

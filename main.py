@@ -16,6 +16,7 @@ arxiv.Result._get_pdf_url = _get_pdf_url_patch
 import argparse
 import os
 import sys
+import re
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 load_dotenv(override=True)
@@ -68,16 +69,55 @@ def _entry_datetime(entry):
         return None
     return datetime(*entry_time[:6], tzinfo=timezone.utc)
 
+def _normalize_query_for_api(query: str) -> str:
+    if not query:
+        return ""
+    if any(token in query for token in ("cat:", "ti:", "au:", "abs:", "all:")):
+        return query
+    parts = [p for p in re.split(r"[+,\s]+", query.strip()) if p]
+    if not parts:
+        return query
+    return " OR ".join([f"cat:{p}" for p in parts])
+
+
+def _result_datetime(result):
+    result_time = getattr(result, "updated", None) or getattr(result, "published", None)
+    if result_time is None:
+        return None
+    if result_time.tzinfo is None:
+        result_time = result_time.replace(tzinfo=timezone.utc)
+    return result_time.astimezone(timezone.utc)
+
+
+def _fetch_recent_papers_via_api(query: str, client: arxiv.Client, cutoff: datetime) -> list[ArxivPaper]:
+    api_query = _normalize_query_for_api(query)
+    if not api_query:
+        logger.warning("API fallback skipped: empty query after normalization.")
+        return []
+    logger.info("API fallback query: {}", api_query)
+    search = arxiv.Search(
+        query=api_query,
+        sort_by=arxiv.SortCriterion.SubmittedDate,
+        sort_order=arxiv.SortOrder.Descending,
+        max_results=API_FALLBACK_MAX_RESULTS,
+    )
+    papers = []
+    for result in client.results(search):
+        result_time = _result_datetime(result)
+        if result_time is None:
+            continue
+        if result_time < cutoff:
+            break
+        papers.append(ArxivPaper(result))
+    return papers
+
 
 LOOKBACK_DAYS = 3
-FORCED_ARXIV_QUERY = "cs.AI"
+API_FALLBACK_MAX_RESULTS = 200
 
 
 def get_arxiv_paper(query:str, debug:bool=False) -> list[ArxivPaper]:
     client = arxiv.Client(num_retries=10,delay_seconds=10)
-    if FORCED_ARXIV_QUERY:
-        logger.warning("Force ARXIV_QUERY to {}", FORCED_ARXIV_QUERY)
-        query = FORCED_ARXIV_QUERY
     rss_url = f"https://rss.arxiv.org/atom/{query}"
     logger.info("RSS URL: {}", rss_url)
     try:
@@ -99,7 +139,8 @@ def get_arxiv_paper(query:str, debug:bool=False) -> list[ArxivPaper]:
         logger.warning("RSS bozo_exception: {}", getattr(feed, "bozo_exception", None))
     if getattr(feed, "feed", None):
         logger.info("RSS feed title: {}", getattr(feed.feed, "title", None))
-    if 'Feed error for query' in feed.feed.title:
+    feed_title = getattr(feed.feed, "title", "") if getattr(feed, "feed", None) else ""
+    if 'Feed error for query' in feed_title:
         raise Exception(f"Invalid ARXIV_QUERY: {query}.")
     if not debug:
         papers = []
@@ -114,6 +155,11 @@ def get_arxiv_paper(query:str, debug:bool=False) -> list[ArxivPaper]:
             LOOKBACK_DAYS,
         )
         logger.info("RSS entries: {}", len(feed.entries))
+        if len(feed.entries) == 0:
+            logger.warning("RSS returned no entries; falling back to arXiv API search.")
+            papers = _fetch_recent_papers_via_api(query, client, cutoff)
+            logger.info("API fallback results within window: {}", len(papers))
+            return papers
         recent_entries = []
         entry_times = []
         for entry in feed.entries:

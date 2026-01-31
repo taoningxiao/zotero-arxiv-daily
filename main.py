@@ -16,6 +16,7 @@ arxiv.Result._get_pdf_url = _get_pdf_url_patch
 import argparse
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 load_dotenv(override=True)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -60,6 +61,13 @@ def filter_corpus(corpus:list[dict], pattern:str) -> list[dict]:
     return new_corpus
 
 
+def _entry_datetime(entry):
+    entry_time = getattr(entry, "updated_parsed", None) or getattr(entry, "published_parsed", None)
+    if entry_time is None:
+        return None
+    return datetime(*entry_time[:6], tzinfo=timezone.utc)
+
+
 def get_arxiv_paper(query:str, debug:bool=False) -> list[ArxivPaper]:
     client = arxiv.Client(num_retries=10,delay_seconds=10)
     feed = feedparser.parse(f"https://rss.arxiv.org/atom/{query}")
@@ -67,7 +75,16 @@ def get_arxiv_paper(query:str, debug:bool=False) -> list[ArxivPaper]:
         raise Exception(f"Invalid ARXIV_QUERY: {query}.")
     if not debug:
         papers = []
-        all_paper_ids = [i.id.removeprefix("oai:arXiv.org:") for i in feed.entries if i.arxiv_announce_type == 'new']
+        cutoff = datetime.now(timezone.utc) - timedelta(days=3)
+        recent_entries = []
+        for entry in feed.entries:
+            entry_time = _entry_datetime(entry)
+            if entry_time is None:
+                continue
+            if entry_time >= cutoff:
+                recent_entries.append(entry)
+        all_paper_ids = [i.id.removeprefix("oai:arXiv.org:") for i in recent_entries]
+        all_paper_ids = list(dict.fromkeys(all_paper_ids))
         bar = tqdm(total=len(all_paper_ids),desc="Retrieving Arxiv papers")
         for i in range(0,len(all_paper_ids),20):
             search = arxiv.Search(id_list=all_paper_ids[i:i+20])
